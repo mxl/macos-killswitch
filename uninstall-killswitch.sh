@@ -16,12 +16,23 @@ PF_CONF_DEFAULT="/etc/pf.conf"
 LAUNCHD_LABEL_DEFAULT="com.mxl.killswitch"
 LAUNCHD_PLIST_DEFAULT="/Library/LaunchDaemons/${LAUNCHD_LABEL_DEFAULT}.plist"
 INSTALL_DIR_DEFAULT="/usr/local/libexec/killswitch"
-BIN_DIR_DEFAULT="/usr/local/bin"
 BIN_PATH_DEFAULT="/usr/local/bin/killswitch"
 
 require_root() {
   if [[ ${EUID} -ne 0 ]]; then
     echo "Please run with sudo: sudo $0"
+    exit 1
+  fi
+}
+
+run_pfctl_quietly() {
+  local cmd_desc="$1"
+  shift
+  local output
+
+  if ! output="$($@ 2>&1)"; then
+    printf '%s\n' "$output" >&2
+    echo "Failed to ${cmd_desc}." >&2
     exit 1
   fi
 }
@@ -60,7 +71,6 @@ main() {
   LAUNCHD_LABEL="$LAUNCHD_LABEL_DEFAULT"
   LAUNCHD_PLIST="$LAUNCHD_PLIST_DEFAULT"
   INSTALL_DIR="$INSTALL_DIR_DEFAULT"
-  BIN_DIR="$BIN_DIR_DEFAULT"
   BIN_PATH="$BIN_PATH_DEFAULT"
 
   backup_file "$LAUNCHD_PLIST"
@@ -97,8 +107,8 @@ main() {
     echo "Anchor file ${ANCHOR_PATH} was already absent"
   fi
 
-  pfctl -nf "$PF_CONF"
-  pfctl -f "$PF_CONF"
+  run_pfctl_quietly "validate pf config" pfctl -nf "$PF_CONF"
+  run_pfctl_quietly "reload pf config" pfctl -f "$PF_CONF"
 
   echo "Kill switch uninstalled from pf."
   echo "Local helper files in ${SCRIPT_DIR} were not removed."

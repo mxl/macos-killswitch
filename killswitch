@@ -16,7 +16,7 @@ PF_CONF="/etc/pf.conf"
 WAN_IF="en0"
 LAUNCHD_LABEL="com.mxl.killswitch"
 LAUNCHD_PLIST="/Library/LaunchDaemons/${LAUNCHD_LABEL}.plist"
-MONITOR_BIN="${SCRIPT_DIR}/killswitch-monitor"
+STAGED_LAUNCHD_PLIST="${SCRIPT_DIR}/${LAUNCHD_LABEL}.plist"
 
 usage() {
   cat <<'EOF'
@@ -36,6 +36,18 @@ EOF
 require_root() {
   if [[ ${EUID} -ne 0 ]]; then
     echo "Please run with sudo: sudo $0 $1"
+    exit 1
+  fi
+}
+
+run_pfctl_quietly() {
+  local cmd_desc="$1"
+  shift
+  local output
+
+  if ! output="$($@ 2>&1)"; then
+    printf '%s\n' "$output" >&2
+    echo "Failed to ${cmd_desc}." >&2
     exit 1
   fi
 }
@@ -154,8 +166,8 @@ cmd_sync_internal() {
     write_block_anchor "${protected_ifaces[@]}"
   fi
 
-  pfctl -nf "$PF_CONF"
-  pfctl -f "$PF_CONF"
+  run_pfctl_quietly "validate pf config" pfctl -nf "$PF_CONF"
+  run_pfctl_quietly "reload pf config" pfctl -f "$PF_CONF"
   pfctl -e >/dev/null 2>&1 || true
 
   echo "Kill switch synced."
@@ -170,6 +182,15 @@ cmd_sync_internal() {
 
 cmd_enable() {
   require_root enable
+  if [[ ! -f "$STAGED_LAUNCHD_PLIST" ]]; then
+    echo "Missing staged LaunchDaemon plist ${STAGED_LAUNCHD_PLIST}. Run sudo ./install-killswitch.sh first."
+    exit 1
+  fi
+
+  cp "$STAGED_LAUNCHD_PLIST" "$LAUNCHD_PLIST"
+  chown root:wheel "$LAUNCHD_PLIST"
+  chmod 644 "$LAUNCHD_PLIST"
+
   "$0" __sync
   launchctl unload "$LAUNCHD_PLIST" >/dev/null 2>&1 || true
   launchctl load -w "$LAUNCHD_PLIST"
@@ -179,14 +200,15 @@ cmd_enable() {
 cmd_disable() {
   require_root disable
   launchctl unload "$LAUNCHD_PLIST" >/dev/null 2>&1 || true
+  rm -f "$LAUNCHD_PLIST"
 
   cat > "$ANCHOR_PATH" <<'EOF'
 # Kill switch disabled.
 EOF
 
   chmod 600 "$ANCHOR_PATH"
-  pfctl -nf "$PF_CONF"
-  pfctl -f "$PF_CONF"
+  run_pfctl_quietly "validate pf config" pfctl -nf "$PF_CONF"
+  run_pfctl_quietly "reload pf config" pfctl -f "$PF_CONF"
   pfctl -e >/dev/null 2>&1 || true
 
   echo "Kill switch daemon disabled."
@@ -332,10 +354,6 @@ cmd_test() {
   fi
 }
 
-cmd_monitor() {
-  exec "$MONITOR_BIN" "$0" __sync
-}
-
 main() {
   local command="${1:-}"
   shift || true
@@ -355,9 +373,6 @@ main() {
       ;;
     __sync)
       cmd_sync_internal "$@"
-      ;;
-    __monitor)
-      cmd_monitor "$@"
       ;;
     ""|help|-h|--help)
       usage

@@ -14,8 +14,6 @@ ANCHOR_NAME="utun-killswitch"
 ANCHOR_PATH="/etc/pf.anchors/${ANCHOR_NAME}"
 PF_CONF="/etc/pf.conf"
 
-WAN_IF="en0"
-
 UNINSTALL_SCRIPT="${SCRIPT_DIR}/uninstall-killswitch.sh"
 MONITOR_SOURCE="${SCRIPT_DIR}/KillSwitchMonitor.swift"
 CLI_SCRIPT="${SCRIPT_DIR}/killswitch"
@@ -24,6 +22,7 @@ LAUNCHD_PLIST="/Library/LaunchDaemons/${LAUNCHD_LABEL}.plist"
 INSTALL_DIR="/usr/local/libexec/killswitch"
 BIN_DIR="/usr/local/bin"
 BIN_PATH="${BIN_DIR}/killswitch"
+STAGED_LAUNCHD_PLIST="${INSTALL_DIR}/${LAUNCHD_LABEL}.plist"
 INSTALLED_CLI_SCRIPT="${INSTALL_DIR}/killswitch"
 INSTALLED_UNINSTALL_SCRIPT="${INSTALL_DIR}/uninstall-killswitch.sh"
 INSTALLED_MONITOR_SOURCE="${INSTALL_DIR}/KillSwitchMonitor.swift"
@@ -32,6 +31,18 @@ INSTALLED_MONITOR_BIN="${INSTALL_DIR}/killswitch-monitor"
 require_root() {
   if [[ ${EUID} -ne 0 ]]; then
     echo "Please run with sudo: sudo $0"
+    exit 1
+  fi
+}
+
+run_pfctl_quietly() {
+  local cmd_desc="$1"
+  shift
+  local output
+
+  if ! output="$($@ 2>&1)"; then
+    printf '%s\n' "$output" >&2
+    echo "Failed to ${cmd_desc}." >&2
     exit 1
   fi
 }
@@ -82,9 +93,7 @@ install_symlinks() {
 }
 
 install_launchdaemon() {
-  backup_file "$LAUNCHD_PLIST"
-
-  cat > "$LAUNCHD_PLIST" <<EOF
+  cat > "$STAGED_LAUNCHD_PLIST" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -114,13 +123,10 @@ install_launchdaemon() {
 </plist>
 EOF
 
-  chown root:wheel "$LAUNCHD_PLIST"
-  chmod 644 "$LAUNCHD_PLIST"
+  chown root:wheel "$STAGED_LAUNCHD_PLIST"
+  chmod 644 "$STAGED_LAUNCHD_PLIST"
 
-  launchctl unload "$LAUNCHD_PLIST" >/dev/null 2>&1 || true
-  launchctl load -w "$LAUNCHD_PLIST"
-
-  echo "Installed LaunchDaemon ${LAUNCHD_LABEL}"
+  echo "Staged LaunchDaemon plist ${STAGED_LAUNCHD_PLIST}"
 }
 
 main() {
@@ -132,8 +138,8 @@ main() {
   seed_placeholder_anchor
   install_launchdaemon
   install_symlinks
-  pfctl -nf "$PF_CONF"
-  pfctl -f "$PF_CONF"
+  run_pfctl_quietly "validate pf config" pfctl -nf "$PF_CONF"
+  run_pfctl_quietly "reload pf config" pfctl -f "$PF_CONF"
   pfctl -e >/dev/null 2>&1 || true
   echo
   echo "Kill switch files are installed."
@@ -144,7 +150,7 @@ main() {
   echo "Installed runtime commands: ${INSTALL_DIR}"
   echo "Installed CLI command: ${BIN_PATH}"
   echo "Installed event-driven monitor: ${INSTALLED_MONITOR_BIN}"
-  echo "Boot watcher installed via: ${LAUNCHD_PLIST}"
+  echo "LaunchDaemon plist staged at: ${STAGED_LAUNCHD_PLIST}"
 }
 
 main "$@"

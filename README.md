@@ -19,7 +19,7 @@ Initial setup:
 sudo ./install-killswitch.sh
 ```
 
-This also installs `/Library/LaunchDaemons/com.mxl.killswitch.plist` and copies the runtime CLI plus monitor into `/usr/local/libexec/killswitch` as root-owned files, so the watcher starts at boot and blocks public traffic until a `utun` route becomes active.
+This copies the runtime CLI plus monitor into `/usr/local/libexec/killswitch` as root-owned files and stages the LaunchDaemon plist there. The plist is copied into `/Library/LaunchDaemons` only when you run `sudo killswitch enable`.
 
 It also installs command symlinks into `/usr/local/bin`:
 

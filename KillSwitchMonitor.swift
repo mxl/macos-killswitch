@@ -2,7 +2,7 @@ import Foundation
 import Darwin
 
 final class KillSwitchMonitor {
-    private let startScript: String
+    private let command: [String]
     private let debounceInterval: TimeInterval = 0.05
     private var debounceTimer: DispatchSourceTimer?
     private var lastMode: String?
@@ -12,12 +12,12 @@ final class KillSwitchMonitor {
         return formatter
     }()
 
-    init(startScript: String) {
-        self.startScript = startScript
+    init(command: [String]) {
+        self.command = command
     }
 
     func run() {
-        log("starting routing-socket monitor with script \(startScript)")
+        log("starting routing-socket monitor with command \(command.joined(separator: " "))")
         syncNow(reason: "startup")
 
         let routeSocket = socket(PF_ROUTE, SOCK_RAW, 0)
@@ -112,7 +112,7 @@ final class KillSwitchMonitor {
     private func syncNow(reason: String) {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/bin/bash")
-        process.arguments = [startScript]
+        process.arguments = command
 
         let outputPipe = Pipe()
         let errorPipe = Pipe()
@@ -157,23 +157,23 @@ final class KillSwitchMonitor {
                 }
             }
             if process.terminationStatus != 0 {
-                logError("\(reason) start-killswitch exited with status \(process.terminationStatus)")
+                logError("\(reason) sync command exited with status \(process.terminationStatus)")
             }
         } catch {
-            logError("\(reason) failed to run start-killswitch: \(error)")
+            logError("\(reason) failed to run sync command: \(error)")
         }
     }
 }
 
-let startScript: String
+let command: [String]
 if CommandLine.arguments.count > 1 {
-    startScript = CommandLine.arguments[1]
+    command = Array(CommandLine.arguments.dropFirst())
 } else {
-    startScript = "/usr/local/libexec/killswitch/killswitch"
+    command = ["/usr/local/libexec/killswitch/killswitch", "__sync"]
 }
 
 setvbuf(stdout, nil, _IOLBF, 0)
 setvbuf(stderr, nil, _IONBF, 0)
 
-let monitor = KillSwitchMonitor(startScript: startScript)
+let monitor = KillSwitchMonitor(command: command)
 monitor.run()
