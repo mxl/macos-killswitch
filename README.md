@@ -1,4 +1,4 @@
-# Kill Switch Workflow
+# Kill Switch for macOS
 
 This folder contains the simpler macOS `pf`-based kill switch variant.
 
