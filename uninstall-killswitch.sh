@@ -9,37 +9,20 @@ print(Path(sys.argv[1]).resolve())
 PY
 )"
 SCRIPT_DIR="$(cd "$(dirname "$SCRIPT_PATH")" && pwd)"
-CONFIG_FILE="${SCRIPT_DIR}/killswitch.conf"
 
 ANCHOR_NAME_DEFAULT="utun-killswitch"
 ANCHOR_PATH_DEFAULT="/etc/pf.anchors/${ANCHOR_NAME_DEFAULT}"
 PF_CONF_DEFAULT="/etc/pf.conf"
-LAUNCHD_LABEL_DEFAULT="com.mxl.killswitch2"
+LAUNCHD_LABEL_DEFAULT="com.mxl.killswitch"
 LAUNCHD_PLIST_DEFAULT="/Library/LaunchDaemons/${LAUNCHD_LABEL_DEFAULT}.plist"
-INSTALL_DIR_DEFAULT="/usr/local/libexec/killswitch2"
+INSTALL_DIR_DEFAULT="/usr/local/libexec/killswitch"
 BIN_DIR_DEFAULT="/usr/local/bin"
-BIN_PREFIX_DEFAULT="killswitch2"
+BIN_PATH_DEFAULT="/usr/local/bin/killswitch"
 
 require_root() {
   if [[ ${EUID} -ne 0 ]]; then
     echo "Please run with sudo: sudo $0"
     exit 1
-  fi
-}
-
-load_config() {
-  ANCHOR_NAME="$ANCHOR_NAME_DEFAULT"
-  ANCHOR_PATH="$ANCHOR_PATH_DEFAULT"
-  PF_CONF="$PF_CONF_DEFAULT"
-  LAUNCHD_LABEL="$LAUNCHD_LABEL_DEFAULT"
-  LAUNCHD_PLIST="$LAUNCHD_PLIST_DEFAULT"
-  INSTALL_DIR="$INSTALL_DIR_DEFAULT"
-  BIN_DIR="$BIN_DIR_DEFAULT"
-  BIN_PREFIX="$BIN_PREFIX_DEFAULT"
-
-  if [[ -f "$CONFIG_FILE" ]]; then
-    # shellcheck disable=SC1090
-    source "$CONFIG_FILE"
   fi
 }
 
@@ -70,7 +53,15 @@ PY
 
 main() {
   require_root
-  load_config
+
+  ANCHOR_NAME="$ANCHOR_NAME_DEFAULT"
+  ANCHOR_PATH="$ANCHOR_PATH_DEFAULT"
+  PF_CONF="$PF_CONF_DEFAULT"
+  LAUNCHD_LABEL="$LAUNCHD_LABEL_DEFAULT"
+  LAUNCHD_PLIST="$LAUNCHD_PLIST_DEFAULT"
+  INSTALL_DIR="$INSTALL_DIR_DEFAULT"
+  BIN_DIR="$BIN_DIR_DEFAULT"
+  BIN_PATH="$BIN_PATH_DEFAULT"
 
   backup_file "$LAUNCHD_PLIST"
   backup_file "$PF_CONF"
@@ -91,16 +82,8 @@ main() {
     echo "Installed runtime directory ${INSTALL_DIR} was already absent"
   fi
 
-  rm -f \
-    "${BIN_DIR}/${BIN_PREFIX}-start" \
-    "${BIN_DIR}/${BIN_PREFIX}-stop" \
-    "${BIN_DIR}/${BIN_PREFIX}-status" \
-    "${BIN_DIR}/${BIN_PREFIX}-test" \
-    "${BIN_DIR}/${BIN_PREFIX}-reload" \
-    "${BIN_DIR}/${BIN_PREFIX}-watch" \
-    "${BIN_DIR}/${BIN_PREFIX}-uninstall" \
-    "${BIN_DIR}/${BIN_PREFIX}-monitor"
-  echo "Removed command symlinks from ${BIN_DIR}"
+  rm -f "$BIN_PATH"
+  echo "Removed CLI symlink ${BIN_PATH}"
 
   if [[ -f "$PF_CONF" ]]; then
     remove_anchor_lines

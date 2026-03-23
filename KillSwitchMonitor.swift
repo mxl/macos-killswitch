@@ -169,7 +169,7 @@ let startScript: String
 if CommandLine.arguments.count > 1 {
     startScript = CommandLine.arguments[1]
 } else {
-    startScript = "/usr/local/libexec/killswitch2/start-killswitch.sh"
+    startScript = "/usr/local/libexec/killswitch/killswitch"
 }
 
 setvbuf(stdout, nil, _IOLBF, 0)
