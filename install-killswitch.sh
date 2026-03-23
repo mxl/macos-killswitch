@@ -15,11 +15,6 @@ ANCHOR_PATH="/etc/pf.anchors/${ANCHOR_NAME}"
 PF_CONF="/etc/pf.conf"
 
 WAN_IF="en0"
-VPN_SERVER="45.149.234.181"
-VPN_PORT="44269"
-VPN_PROTO="udp"
-SSH_PORT="22"
-SSH_PROTO="tcp"
 
 CONFIG_FILE="${SCRIPT_DIR}/killswitch.conf"
 START_SCRIPT="${SCRIPT_DIR}/start-killswitch.sh"
@@ -29,6 +24,7 @@ TEST_SCRIPT="${SCRIPT_DIR}/test-killswitch.sh"
 RELOAD_SCRIPT="${SCRIPT_DIR}/reload-killswitch.sh"
 WATCH_SCRIPT="${SCRIPT_DIR}/watch-killswitch.sh"
 UNINSTALL_SCRIPT="${SCRIPT_DIR}/uninstall-killswitch.sh"
+MONITOR_SOURCE="${SCRIPT_DIR}/KillSwitchMonitor.swift"
 LAUNCHD_LABEL="com.mxl.killswitch2"
 LAUNCHD_PLIST="/Library/LaunchDaemons/${LAUNCHD_LABEL}.plist"
 INSTALL_DIR="/usr/local/libexec/killswitch2"
@@ -42,6 +38,8 @@ INSTALLED_TEST_SCRIPT="${INSTALL_DIR}/test-killswitch.sh"
 INSTALLED_RELOAD_SCRIPT="${INSTALL_DIR}/reload-killswitch.sh"
 INSTALLED_WATCH_SCRIPT="${INSTALL_DIR}/watch-killswitch.sh"
 INSTALLED_UNINSTALL_SCRIPT="${INSTALL_DIR}/uninstall-killswitch.sh"
+INSTALLED_MONITOR_SOURCE="${INSTALL_DIR}/KillSwitchMonitor.swift"
+INSTALLED_MONITOR_BIN="${INSTALL_DIR}/killswitch-monitor"
 
 require_root() {
   if [[ ${EUID} -ne 0 ]]; then
@@ -73,13 +71,6 @@ ANCHOR_NAME="${ANCHOR_NAME}"
 ANCHOR_PATH="${ANCHOR_PATH}"
 PF_CONF="${PF_CONF}"
 WAN_IF="${WAN_IF}"
-VPN_SERVER="${VPN_SERVER}"
-VPN_PORT="${VPN_PORT}"
-VPN_PROTO="${VPN_PROTO}"
-SSH_PORT="${SSH_PORT}"
-SSH_PROTO="${SSH_PROTO}"
-
-KILLSWITCH_MODE="simple_utun_active"
 EOF
   chmod 600 "$CONFIG_FILE"
   echo "Wrote ${CONFIG_FILE}"
@@ -95,6 +86,8 @@ install_runtime_scripts() {
   cp "$RELOAD_SCRIPT" "$INSTALLED_RELOAD_SCRIPT"
   cp "$WATCH_SCRIPT" "$INSTALLED_WATCH_SCRIPT"
   cp "$UNINSTALL_SCRIPT" "$INSTALLED_UNINSTALL_SCRIPT"
+  cp "$MONITOR_SOURCE" "$INSTALLED_MONITOR_SOURCE"
+  swiftc -O -o "$INSTALLED_MONITOR_BIN" "$INSTALLED_MONITOR_SOURCE"
   chown -R root:wheel "$INSTALL_DIR"
   chmod 755 "$INSTALL_DIR"
   chmod 600 "$INSTALLED_CONFIG_FILE"
@@ -105,7 +98,8 @@ install_runtime_scripts() {
     "$INSTALLED_TEST_SCRIPT" \
     "$INSTALLED_RELOAD_SCRIPT" \
     "$INSTALLED_WATCH_SCRIPT" \
-    "$INSTALLED_UNINSTALL_SCRIPT"
+    "$INSTALLED_UNINSTALL_SCRIPT" \
+    "$INSTALLED_MONITOR_BIN"
   echo "Installed runtime commands into ${INSTALL_DIR}"
 }
 
@@ -118,6 +112,7 @@ install_symlinks() {
   ln -sf "$INSTALLED_RELOAD_SCRIPT" "${BIN_DIR}/${BIN_PREFIX}-reload"
   ln -sf "$INSTALLED_WATCH_SCRIPT" "${BIN_DIR}/${BIN_PREFIX}-watch"
   ln -sf "$INSTALLED_UNINSTALL_SCRIPT" "${BIN_DIR}/${BIN_PREFIX}-uninstall"
+  ln -sf "$INSTALLED_MONITOR_BIN" "${BIN_DIR}/${BIN_PREFIX}-monitor"
   echo "Installed command symlinks into ${BIN_DIR}"
 }
 
@@ -134,8 +129,8 @@ install_launchdaemon() {
 
     <key>ProgramArguments</key>
     <array>
-      <string>${INSTALLED_WATCH_SCRIPT}</string>
-      <string>5</string>
+      <string>${INSTALLED_MONITOR_BIN}</string>
+      <string>${INSTALLED_START_SCRIPT}</string>
     </array>
 
     <key>RunAtLoad</key>
@@ -180,6 +175,7 @@ main() {
   echo "Stop it with: sudo ${STOP_SCRIPT}"
   echo "Installed runtime commands: ${INSTALL_DIR}"
   echo "Installed command symlinks: ${BIN_DIR}/${BIN_PREFIX}-*"
+  echo "Installed event-driven monitor: ${INSTALLED_MONITOR_BIN}"
   echo "Boot watcher installed via: ${LAUNCHD_PLIST}"
 }
 

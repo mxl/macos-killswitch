@@ -98,7 +98,8 @@ main() {
     "${BIN_DIR}/${BIN_PREFIX}-test" \
     "${BIN_DIR}/${BIN_PREFIX}-reload" \
     "${BIN_DIR}/${BIN_PREFIX}-watch" \
-    "${BIN_DIR}/${BIN_PREFIX}-uninstall"
+    "${BIN_DIR}/${BIN_PREFIX}-uninstall" \
+    "${BIN_DIR}/${BIN_PREFIX}-monitor"
   echo "Removed command symlinks from ${BIN_DIR}"
 
   if [[ -f "$PF_CONF" ]]; then

@@ -10,6 +10,8 @@ PY
 )"
 SCRIPT_DIR="$(cd "$(dirname "$SCRIPT_PATH")" && pwd)"
 CONFIG_FILE="${SCRIPT_DIR}/killswitch.conf"
+LAUNCHD_LABEL_DEFAULT="com.mxl.killswitch2"
+LAUNCHD_PLIST_DEFAULT="/Library/LaunchDaemons/${LAUNCHD_LABEL_DEFAULT}.plist"
 
 require_config() {
   if [[ ! -f "$CONFIG_FILE" ]]; then
@@ -19,6 +21,8 @@ require_config() {
   # shellcheck disable=SC1090
   source "$CONFIG_FILE"
   WAN_IF="${WAN_IF:-en0}"
+  LAUNCHD_LABEL="${LAUNCHD_LABEL:-$LAUNCHD_LABEL_DEFAULT}"
+  LAUNCHD_PLIST="${LAUNCHD_PLIST:-$LAUNCHD_PLIST_DEFAULT}"
 }
 
 print_header() {
@@ -80,6 +84,27 @@ main() {
   else
     echo "Unable to read pf status. Try running this script with sudo."
   fi
+
+  print_header "Monitor Status"
+  echo "LaunchDaemon plist: ${LAUNCHD_PLIST}"
+  if [[ -f "$LAUNCHD_PLIST" ]]; then
+    echo "LaunchDaemon plist present: yes"
+  else
+    echo "LaunchDaemon plist present: no"
+  fi
+  if sudo launchctl print "system/${LAUNCHD_LABEL}" >/tmp/killswitch2-launchctl.$$ 2>/tmp/killswitch2-launchctl-err.$$; then
+    awk '
+      /state =/ || /pid =/ || /last exit code =/ || /path =/ || /program =/ || /arguments =/ {
+        print
+      }
+    ' /tmp/killswitch2-launchctl.$$
+  else
+    echo "LaunchDaemon not loaded or not readable."
+    if [[ -s /tmp/killswitch2-launchctl-err.$$ ]]; then
+      cat /tmp/killswitch2-launchctl-err.$$
+    fi
+  fi
+  rm -f /tmp/killswitch2-launchctl.$$ /tmp/killswitch2-launchctl-err.$$
 
   print_header "Anchor File"
   if [[ -f "$ANCHOR_PATH" ]]; then
