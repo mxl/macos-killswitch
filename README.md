@@ -52,6 +52,8 @@ sudo killswitch status
 sudo killswitch test
 ```
 
+`killswitch status` starts with a setup health section. Failed checks are shown in red, including missing `pf` anchor references, missing runtime files, unloaded anchors, and missing LaunchDaemon setup.
+
 Disable without uninstalling:
 
 ```bash
@@ -73,3 +75,28 @@ sudo ./uninstall-killswitch.sh
 - The boot watcher runs the root-owned copies from `/usr/local/libexec/killswitch` rather than the workspace files.
 - You can also run the installed CLI directly from `/usr/local/libexec/killswitch/killswitch` if you prefer using the system copy.
 - Boot-time monitoring now uses a Swift daemon built from `KillSwitchMonitor.swift` and triggered by PF_ROUTE routing-socket events rather than SystemConfiguration notifications or polling.
+
+## Troubleshooting
+
+If this command fails with `pfctl: DIOCGETRULES: Invalid argument`:
+
+```bash
+sudo pfctl -a utun-killswitch -sr
+```
+
+the anchor file may exist, but `/etc/pf.conf` is not loading it. Reinstall and enable the setup:
+
+```bash
+sudo ./install-killswitch.sh
+sudo killswitch enable
+sudo killswitch status
+```
+
+`/etc/pf.conf` must contain both lines:
+
+```pf
+anchor "utun-killswitch"
+load anchor "utun-killswitch" from "/etc/pf.anchors/utun-killswitch"
+```
+
+If `killswitch status` reports a broken setup, the kill switch cannot be trusted to block public traffic until the red failures are fixed.

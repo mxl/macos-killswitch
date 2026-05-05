@@ -60,6 +60,171 @@ print_header() {
   printf '\n== %s ==\n' "$1"
 }
 
+red() {
+  printf '\033[31m%s\033[0m\n' "$*"
+}
+
+yellow() {
+  printf '\033[33m%s\033[0m\n' "$*"
+}
+
+green() {
+  printf '\033[32m%s\033[0m\n' "$*"
+}
+
+pf_conf_has_anchor() {
+  [[ -f "$PF_CONF" ]] && \
+    grep -Fq "anchor \"${ANCHOR_NAME}\"" "$PF_CONF" && \
+    grep -Fq "load anchor \"${ANCHOR_NAME}\" from \"${ANCHOR_PATH}\"" "$PF_CONF"
+}
+
+anchor_file_exists() {
+  [[ -f "$ANCHOR_PATH" ]]
+}
+
+pf_is_enabled() {
+  if [[ ${EUID} -eq 0 ]]; then
+    pfctl -s info 2>/dev/null | grep -Fq "Status: Enabled"
+  elif have_sudo; then
+    sudo -n pfctl -s info 2>/dev/null | grep -Fq "Status: Enabled"
+  else
+    return 2
+  fi
+}
+
+anchor_is_loaded() {
+  if [[ ${EUID} -eq 0 ]]; then
+    pfctl -a "$ANCHOR_NAME" -sr >/dev/null 2>&1
+  elif have_sudo; then
+    sudo -n pfctl -a "$ANCHOR_NAME" -sr >/dev/null 2>&1
+  else
+    return 2
+  fi
+}
+
+launchdaemon_is_loaded() {
+  if [[ ${EUID} -eq 0 ]]; then
+    launchctl print "system/${LAUNCHD_LABEL}" >/dev/null 2>&1
+  elif have_sudo; then
+    sudo -n launchctl print "system/${LAUNCHD_LABEL}" >/dev/null 2>&1
+  else
+    return 2
+  fi
+}
+
+installed_runtime_exists() {
+  [[ -x "/usr/local/libexec/killswitch/killswitch" ]] && \
+    [[ -x "/usr/local/libexec/killswitch/killswitch-monitor" ]]
+}
+
+print_health_line() {
+  local status="$1"
+  shift
+
+  case "$status" in
+    PASS)
+      green "PASS: $*"
+      ;;
+    WARN)
+      yellow "WARN: $*"
+      ;;
+    FAIL)
+      red "FAIL: $*"
+      ;;
+  esac
+}
+
+check_setup_health() {
+  local broken=0 rc
+
+  if [[ -f "$PF_CONF" ]]; then
+    print_health_line PASS "PF config exists: ${PF_CONF}"
+  else
+    print_health_line FAIL "PF config does not exist: ${PF_CONF}"
+    broken=1
+  fi
+
+  if pf_conf_has_anchor; then
+    print_health_line PASS "${PF_CONF} loads anchor \"${ANCHOR_NAME}\""
+  else
+    print_health_line FAIL "${PF_CONF} does not load anchor \"${ANCHOR_NAME}\""
+    broken=1
+  fi
+
+  if anchor_file_exists; then
+    print_health_line PASS "Anchor file exists: ${ANCHOR_PATH}"
+    if [[ -r "$ANCHOR_PATH" ]]; then
+      print_health_line PASS "Anchor file is readable"
+    else
+      print_health_line WARN "Anchor file is not readable. Run with sudo for full details."
+    fi
+  else
+    print_health_line FAIL "Anchor file does not exist: ${ANCHOR_PATH}"
+    broken=1
+  fi
+
+  pf_is_enabled
+  rc=$?
+  if [[ $rc -eq 0 ]]; then
+    print_health_line PASS "PF is enabled"
+  elif [[ $rc -eq 2 ]]; then
+    print_health_line WARN "Unable to read PF status without sudo"
+  else
+    print_health_line FAIL "PF is not enabled"
+    broken=1
+  fi
+
+  anchor_is_loaded
+  rc=$?
+  if [[ $rc -eq 0 ]]; then
+    print_health_line PASS "PF anchor \"${ANCHOR_NAME}\" is loaded"
+  elif [[ $rc -eq 2 ]]; then
+    print_health_line WARN "Unable to verify loaded PF anchor without sudo"
+  else
+    print_health_line FAIL "PF anchor \"${ANCHOR_NAME}\" is not loaded"
+    broken=1
+  fi
+
+  if installed_runtime_exists; then
+    print_health_line PASS "Installed runtime files are present"
+  else
+    print_health_line FAIL "Installed runtime files are missing or not executable"
+    broken=1
+  fi
+
+  if [[ -f "$LAUNCHD_PLIST" ]]; then
+    print_health_line PASS "LaunchDaemon plist exists: ${LAUNCHD_PLIST}"
+  else
+    print_health_line WARN "LaunchDaemon plist is not installed: ${LAUNCHD_PLIST}"
+  fi
+
+  launchdaemon_is_loaded
+  rc=$?
+  if [[ $rc -eq 0 ]]; then
+    print_health_line PASS "LaunchDaemon is loaded"
+  elif [[ $rc -eq 2 ]]; then
+    print_health_line WARN "Unable to verify LaunchDaemon without sudo"
+  else
+    print_health_line WARN "LaunchDaemon is not loaded"
+  fi
+
+  if [[ $broken -ne 0 ]]; then
+    red "Kill switch setup is broken. Public traffic may not be protected."
+    red "Run: sudo ./install-killswitch.sh"
+    red "Then: sudo killswitch enable"
+  fi
+
+  return "$broken"
+}
+
+require_anchor_installed() {
+  if ! pf_conf_has_anchor; then
+    red "Kill switch setup is incomplete: ${PF_CONF} does not load anchor \"${ANCHOR_NAME}\"."
+    red "Run: sudo ./install-killswitch.sh"
+    exit 1
+  fi
+}
+
 utun_is_active() {
   netstat -rn -f inet | awk '
     $4 ~ /^utun/ && ($1 == "default" || $1 == "0/1" || $1 == "128.0/1") { found = 1 }
@@ -68,8 +233,8 @@ utun_is_active() {
 }
 
 current_mode() {
-  if [[ -f "$ANCHOR_PATH" ]]; then
-    awk '/^# mode: / { print $3; exit }' "$ANCHOR_PATH"
+  if [[ -r "$ANCHOR_PATH" ]]; then
+    awk '/^# mode: / { print $3; exit }' "$ANCHOR_PATH" || true
   fi
 }
 
@@ -182,8 +347,10 @@ cmd_sync_internal() {
 
 cmd_enable() {
   require_root enable
+  require_anchor_installed
+
   if [[ ! -f "$STAGED_LAUNCHD_PLIST" ]]; then
-    echo "Missing staged LaunchDaemon plist ${STAGED_LAUNCHD_PLIST}. Run sudo ./install-killswitch.sh first."
+    red "Missing staged LaunchDaemon plist ${STAGED_LAUNCHD_PLIST}. Run sudo ./install-killswitch.sh first."
     exit 1
   fi
 
@@ -195,10 +362,17 @@ cmd_enable() {
   launchctl unload "$LAUNCHD_PLIST" >/dev/null 2>&1 || true
   launchctl load -w "$LAUNCHD_PLIST"
   echo "Kill switch daemon enabled."
+
+  print_header "Setup Health"
+  check_setup_health || true
 }
 
 cmd_disable() {
   require_root disable
+  if ! pf_conf_has_anchor; then
+    yellow "PF anchor is not installed in ${PF_CONF}; PF rules may already be inactive."
+  fi
+
   launchctl unload "$LAUNCHD_PLIST" >/dev/null 2>&1 || true
   rm -f "$LAUNCHD_PLIST"
 
@@ -213,10 +387,16 @@ EOF
 
   echo "Kill switch daemon disabled."
   echo "Kill switch disabled."
+
+  print_header "Setup Health"
+  check_setup_health || true
 }
 
 cmd_status() {
   local mode
+
+  print_header "Setup Health"
+  check_setup_health || true
 
   print_header "Config"
   echo "Anchor: ${ANCHOR_NAME}"
@@ -278,8 +458,10 @@ cmd_status() {
   rm -f /tmp/killswitch-launchctl.$$ /tmp/killswitch-launchctl-err.$$
 
   print_header "Anchor File"
-  if [[ -f "$ANCHOR_PATH" ]]; then
+  if [[ -r "$ANCHOR_PATH" ]]; then
     cat "$ANCHOR_PATH"
+  elif [[ -e "$ANCHOR_PATH" ]]; then
+    yellow "Anchor file exists but is not readable. Run with sudo for full details."
   else
     echo "Anchor file does not exist."
   fi
@@ -297,8 +479,14 @@ cmd_test() {
 
   echo "Testing simple utun-based kill switch"
 
+  print_header "Setup Health"
+  if ! check_setup_health; then
+    red "FAIL: Setup health checks failed. Network blocking cannot be trusted."
+    return 1
+  fi
+
   if [[ ! -f "$ANCHOR_PATH" ]]; then
-    echo "FAIL: Anchor file ${ANCHOR_PATH} does not exist"
+    red "FAIL: Anchor file ${ANCHOR_PATH} does not exist"
     return 1
   fi
   echo "PASS: Anchor file exists"
@@ -308,23 +496,33 @@ cmd_test() {
   elif sudo pfctl -s info >/dev/null 2>&1; then
     echo "PASS: pf status is readable"
   else
-    echo "FAIL: Unable to read pf status even with sudo"
+    red "FAIL: Unable to read pf status even with sudo"
+    return 1
+  fi
+
+  if have_sudo && ! sudo pfctl -a "$ANCHOR_NAME" -sr >/dev/null 2>&1; then
+    red "FAIL: Anchor is not loaded in PF, so network blocking cannot work."
     return 1
   fi
 
   mode="$(current_mode)"
+  if [[ -z "$mode" && -e "$ANCHOR_PATH" && ! -r "$ANCHOR_PATH" ]]; then
+    yellow "WARN: Anchor mode is not readable without elevated access. Run with sudo for full test results."
+    return 1
+  fi
+
   if utun_is_active; then
     if [[ "$mode" == "allow" ]]; then
       echo "PASS: Anchor mode is allow while utun is active"
     else
-      echo "FAIL: utun is active but anchor mode is ${mode:-unknown}"
+      red "FAIL: utun is active but anchor mode is ${mode:-unknown}"
       return 1
     fi
   else
     if [[ "$mode" == "block" ]]; then
       echo "PASS: Anchor mode is block while no utun route is active"
     else
-      echo "FAIL: no utun route is active but anchor mode is ${mode:-unknown}"
+      red "FAIL: no utun route is active but anchor mode is ${mode:-unknown}"
       return 1
     fi
   fi
@@ -347,7 +545,7 @@ cmd_test() {
       echo "PASS: Public internet request is blocked/fails while no utun is active"
       echo "INFO: curl exit=${rc}: ${output}"
     else
-      echo "FAIL: Public internet request succeeded while no utun is active"
+      red "FAIL: Public internet request succeeded while no utun is active"
       echo "INFO: curl output: ${output}"
       return 1
     fi
